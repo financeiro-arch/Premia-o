@@ -10,72 +10,63 @@ FALLBACK_DESVEND = os.path.join("data", "DesVend AUDITORIA_AUTOMATICA.xlsx")
 st.set_page_config(page_title="Sistema de Premiação", layout="wide")
 
 @st.cache_data
-def read_file(uploaded_file=None, fallback_path=None):
+def read_auditoria(uploaded_file=None, fallback_path=None):
     """
-    Lê arquivo Excel da aba DesVend e retorna DataFrame.
+    Lê a aba AUDITORIA do Excel, remove linhas extras e retorna apenas as colunas necessárias.
     """
     if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file, sheet_name="DesVend")
+        df = pd.read_excel(uploaded_file, sheet_name="AUDITORIA")
     elif fallback_path is not None and os.path.exists(fallback_path):
-        df = pd.read_excel(fallback_path, sheet_name="DesVend")
+        df = pd.read_excel(fallback_path, sheet_name="AUDITORIA")
     else:
-        df = pd.DataFrame()
+        return pd.DataFrame()
+
+    # Pular cabeçalhos
+    df = df.iloc[2:, [0,1,2,3,5,6]]
+    df.columns = ["LOJA", "COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]
+    df = df.dropna(how="all")
+
+    # Converter numéricos
+    for col in ["COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Remover linhas totalmente vazias
+    df = df.dropna(subset=["LOJA", "COTA", "VENDAS"], how="all")
     return df
 
-def processar_dados(df):
-    # Filtrar colunas relevantes
-    df = df[['LOJA', 'TOTAL VENDAS']].dropna()
-    df = df[df['TOTAL VENDAS'] > 0]
-    
-    # Agrupar por loja
-    df_grouped = df.groupby('LOJA', as_index=False)['TOTAL VENDAS'].sum()
-    
-    # Calcular percentual
-    total = df_grouped['TOTAL VENDAS'].sum()
-    df_grouped['%'] = (df_grouped['TOTAL VENDAS'] / total) * 100
-    
-    # Ordenar
-    df_grouped = df_grouped.sort_values('TOTAL VENDAS', ascending=False)
-    return df_grouped
-
-def gerar_excel_download(df_grouped):
+def gerar_excel_download(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_grouped.to_excel(writer, index=False, sheet_name="Faturamento")
+        df.to_excel(writer, index=False, sheet_name="Relatório")
     return output.getvalue()
 
 # Interface Streamlit
-st.title("📊 Sistema de Premiação - Faturamento por Loja")
+st.title("📊 Sistema de Premiação - Relatório AUDITORIA")
 
 uploaded_file = st.file_uploader("Envie o arquivo Excel", type=["xlsx"])
 
-df = read_file(uploaded_file, fallback_path=FALLBACK_DESVEND)
+df = read_auditoria(uploaded_file, fallback_path=FALLBACK_DESVEND)
 
 if not df.empty:
-    df_grouped = processar_dados(df)
-    
     # Mostrar tabela
     st.subheader("Tabela Consolidada")
-    st.dataframe(df_grouped, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
     
-    # Criar gráfico com Plotly
-    st.subheader("Gráfico de Faturamento")
-    fig = px.bar(df_grouped, 
-                 x=df_grouped['LOJA'].astype(str), 
-                 y="TOTAL VENDAS", 
-                 text=df_grouped.apply(lambda row: f"R$ {row['TOTAL VENDAS']:,.0f} ({row['%']:.1f}%)", axis=1),
-                 labels={"LOJA": "Loja", "TOTAL VENDAS": "Faturamento (R$)"},
-                 title="Faturamento por Loja")
+    # Criar gráfico de VENDAS
+    st.subheader("Gráfico de Vendas por Loja")
+    fig = px.bar(df.sort_values("VENDAS", ascending=False),
+                 x="LOJA", y="VENDAS",
+                 text=df["VENDAS"].apply(lambda x: f"R$ {x:,.0f}"),
+                 labels={"LOJA": "Loja", "VENDAS": "Vendas (R$)"},
+                 title="Vendas por Loja")
     fig.update_traces(textposition='outside', marker_color='royalblue')
-    fig.update_layout(yaxis_title="Faturamento (R$)", xaxis_title="Loja", uniformtext_minsize=8, uniformtext_mode='hide')
-    
     st.plotly_chart(fig, use_container_width=True)
-    
+
     # Botão de download
     st.download_button(
         label="📥 Baixar Excel Consolidado",
-        data=gerar_excel_download(df_grouped),
-        file_name="faturamento_por_loja.xlsx",
+        data=gerar_excel_download(df),
+        file_name="relatorio_auditoria.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
