@@ -1,156 +1,119 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import io
-import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Relatório de Faturamento & Premiações", layout="wide")
-
-# -------------------- Função para exportar Excel --------------------
-def gerar_excel_download(df, nome_aba):
+# ==============================
+# Função para gerar Excel formatado
+# ==============================
+def gerar_excel_formatado(df):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name=nome_aba, index=False)
-
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Faturamento')
         workbook = writer.book
-        worksheet = writer.sheets[nome_aba]
+        worksheet = writer.sheets['Faturamento']
+
+        # Ajustar largura das colunas
+        for i, col in enumerate(df.columns):
+            col_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(i, i, col_width)
 
         # Formatos
-        formato_moeda = workbook.add_format({"num_format": "R$ #,##0.00"})
-        formato_percent = workbook.add_format({"num_format": "0.0%"})
-        formato_cabecalho = workbook.add_format({"bold": True, "bg_color": "#D9D9D9"})
+        formato_moeda = workbook.add_format({'num_format': 'R$ #,##0.00'})
+        formato_percent = workbook.add_format({'num_format': '0.0%'})
+        formato_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3'})
 
-        # Cabeçalho
-        worksheet.set_row(0, None, formato_cabecalho)
+        # Cabeçalho com cinza claro
+        for col_num, value in enumerate(df.columns):
+            worksheet.write(0, col_num, value, formato_header)
 
-        # Ajustar largura das colunas e aplicar formatos
-        for idx, col in enumerate(df.columns):
-            max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(idx, idx, max_len)
-            if "COTA" in col or "VENDAS" in col or "VALOR" in col or "TOTAL" in col:
-                worksheet.set_column(idx, idx, max_len, formato_moeda)
-            if "%" in col:
-                worksheet.set_column(idx, idx, max_len, formato_percent)
+        # Aplicar formatação
+        moeda_cols = ['COTA TOTAL', 'TOTAL VENDAS', 'TICK MEDIO', 'SALDO COTA TOTAL']
+        perc_cols = ['% VENDAS', '% SALDO COTA']
+
+        for row_num in range(1, len(df) + 1):
+            for col_num, col_name in enumerate(df.columns):
+                if col_name in moeda_cols:
+                    worksheet.write(row_num, col_num, df[col_name].iloc[row_num-1], formato_moeda)
+                elif col_name in perc_cols:
+                    worksheet.write(row_num, col_num, df[col_name].iloc[row_num-1], formato_percent)
 
     output.seek(0)
     return output
 
-# -------------------- Aba FATURAMENTO --------------------
-st.title("Relatório de Faturamento & Premiações")
-tab1, tab2 = st.tabs(["📊 Faturamento", "🏆 Premiações"])
+# ==============================
+# Função para consolidar dados
+# ==============================
+def consolidar_faturamento(df):
+    df_group = df.groupby('LOJA').agg({
+        'COTA TOTAL': 'sum',
+        'TOTAL VENDAS': 'sum',
+        'QUANT VENDAS': 'sum',
+        'SALDO COTA TOTAL': 'sum'
+    }).reset_index()
 
-with tab1:
-    st.subheader("Faturamento")
-    arquivo = st.file_uploader("Envie a planilha de Faturamento (DesVend)", type=["xlsx"], key="fat_file")
+    df_group['% VENDAS'] = df_group['TOTAL VENDAS'] / df_group['COTA TOTAL']
+    df_group['TICK MEDIO'] = df_group['TOTAL VENDAS'] / df_group['QUANT VENDAS']
+    df_group['% SALDO COTA'] = df_group['SALDO COTA TOTAL'] / df_group['COTA TOTAL']
 
-    if arquivo:
-        df = pd.read_excel(arquivo)
+    # Reordenar colunas
+    colunas_ordem = [
+        'LOJA', 'COTA TOTAL', 'TOTAL VENDAS', 'QUANT VENDAS',
+        '% VENDAS', 'TICK MEDIO', 'SALDO COTA TOTAL', '% SALDO COTA'
+    ]
+    df_group = df_group[colunas_ordem]
 
-        # Consolidar por LOJA
-        consolidado = df.groupby("LOJA").agg({
-            "COTA TOTAL": "sum",
-            "TOTAL VENDAS": "sum",
-            "SALDO COTA TOTAL": "sum",
-            "QUANT VENDAS": "sum"
-        }).reset_index()
+    return df_group
 
-        # Calcular colunas
-        consolidado["% VENDAS"] = consolidado["TOTAL VENDAS"] / consolidado["COTA TOTAL"]
-        consolidado["% SALDO COTA"] = consolidado["SALDO COTA TOTAL"] / consolidado["COTA TOTAL"]
-        consolidado["TICK MEDIO"] = consolidado["TOTAL VENDAS"] / consolidado["QUANT VENDAS"]
+# ==============================
+# Interface Streamlit
+# ==============================
+st.set_page_config(page_title="Relatório de Faturamento & Premiações", layout="wide")
+st.title("📊 Relatório de Faturamento & Premiações")
 
-        # Exibir
-        st.dataframe(consolidado.style.format({
-            "COTA TOTAL": "R$ {:,.2f}",
-            "TOTAL VENDAS": "R$ {:,.2f}",
-            "% VENDAS": "{:.1%}",
-            "SALDO COTA TOTAL": "R$ {:,.2f}",
-            "% SALDO COTA": "{:.1%}",
-            "TICK MEDIO": "R$ {:,.2f}"
-        }))
+aba = st.tabs(["Faturamento", "Premiações"])
 
-        # Gráfico
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.bar(consolidado["LOJA"], consolidado["TOTAL VENDAS"], color="royalblue")
-        ax.set_ylabel("Total Vendas (R$)")
-        ax.set_title("Faturamento por Loja")
-        plt.xticks(rotation=45)
-        st.pyplot(fig)
+with aba[0]:
+    st.header("📈 Faturamento")
+    uploaded_file = st.file_uploader("Envie o arquivo Excel com os dados de faturamento", type=['xlsx'])
 
-        # Download Excel
-        st.download_button(
-            "⬇️ Baixar Faturamento",
-            data=gerar_excel_download(consolidado, "Faturamento"),
-            file_name="Faturamento.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# -------------------- Aba PREMIAÇÕES --------------------
-with tab2:
-    st.subheader("Premiações")
-
-    arquivo_fat = st.file_uploader("Envie o arquivo de Faturamento (processado)", type=["xlsx"], key="prem_fat")
-    arquivo_taloes = st.file_uploader("Envie o arquivo de TALÕES PENDENTES", type=["xlsx"], key="prem_taloes")
-
-    if arquivo_fat and arquivo_taloes:
-        df_fat = pd.read_excel(arquivo_fat)
-        df_taloes = pd.read_excel(arquivo_taloes)
-
-        # Base inicial
-        prem = df_fat[["LOJA", "COTA TOTAL", "TOTAL VENDAS", "% VENDAS", "SALDO COTA TOTAL", "% SALDO COTA"]].copy()
-
-        # Junta com talões pendentes
-        if "VENDAS FORA DA POLÍTICA" in df_taloes.columns:
-            prem = prem.merge(df_taloes[["LOJA", "VENDAS FORA DA POLÍTICA"]], on="LOJA", how="left")
-        else:
-            prem["VENDAS FORA DA POLÍTICA"] = 0
-
-        # Calcula vendas atualizadas
-        prem["VENDAS ATUALIZADAS"] = prem["TOTAL VENDAS"] - prem["VENDAS FORA DA POLÍTICA"]
-        prem["% VENDAS ATUALIZADAS"] = prem["VENDAS ATUALIZADAS"] / prem["COTA TOTAL"]
-
-        # Escolha de modo
-        modo = st.radio("Escolha o modo de preenchimento de premiação:", ["Manual", "Automático"])
-
-        if modo == "Manual":
-            premiado_list = []
-            valor_list = []
-            for i, row in prem.iterrows():
-                col1, col2 = st.columns([2, 2])
-                with col1:
-                    premiado = st.selectbox(f"Loja {row['LOJA']} premiada?", ["NÃO", "SIM"], key=f"prem_{i}")
-                with col2:
-                    valor = st.number_input(f"Valor premiação loja {row['LOJA']}", min_value=0.0, step=50.0, key=f"val_{i}")
-                premiado_list.append(premiado)
-                valor_list.append(valor)
-
-        else:
-            perc_min = st.number_input("Informe o % mínimo para premiar", min_value=0.0, max_value=100.0, step=1.0, value=45.0)
-            valor_fix = st.number_input("Informe o valor fixo da premiação", min_value=0.0, step=50.0, value=100.0)
-            premiado_list = ["SIM" if x >= perc_min/100 else "NÃO" for x in prem["% VENDAS ATUALIZADAS"]]
-            valor_list = [valor_fix if p == "SIM" else 0 for p in premiado_list]
-
-        prem["PREMIADO"] = premiado_list
-        prem["VALOR"] = valor_list
-        prem["TOTAL LOJA"] = prem["TOTAL VENDAS"] + prem["VALOR"]
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file, sheet_name="DesVend")
+        consolidado = consolidar_faturamento(df)
 
         # Exibir tabela formatada
-        st.dataframe(prem.style.format({
-            "COTA TOTAL": "R$ {:,.2f}",
-            "TOTAL VENDAS": "R$ {:,.2f}",
-            "% VENDAS": "{:.1%}",
-            "SALDO COTA TOTAL": "R$ {:,.2f}",
-            "% SALDO COTA": "{:.1%}",
-            "VENDAS FORA DA POLÍTICA": "R$ {:,.2f}",
-            "VENDAS ATUALIZADAS": "R$ {:,.2f}",
-            "% VENDAS ATUALIZADAS": "{:.1%}",
-            "VALOR": "R$ {:,.2f}",
-            "TOTAL LOJA": "R$ {:,.2f}"
-        }))
+        st.dataframe(
+            consolidado.style
+            .format({
+                'COTA TOTAL': "R$ {:,.2f}",
+                'TOTAL VENDAS': "R$ {:,.2f}",
+                'TICK MEDIO': "R$ {:,.2f}",
+                'SALDO COTA TOTAL': "R$ {:,.2f}",
+                '% VENDAS': "{:.1%}",
+                '% SALDO COTA': "{:.1%}"
+            }),
+            use_container_width=True
+        )
+
+        # Gráfico dinâmico
+        fig = px.bar(
+            consolidado,
+            x='LOJA',
+            y='TOTAL VENDAS',
+            text='TOTAL VENDAS',
+            title="Faturamento por Loja",
+            color='TOTAL VENDAS',
+            color_continuous_scale='Blues'
+        )
+        fig.update_traces(texttemplate='R$ %{y:,.2f}', textposition='outside')
+        fig.update_layout(xaxis_tickangle=-45, height=500, uniformtext_minsize=8, uniformtext_mode='hide')
+        st.plotly_chart(fig, use_container_width=True)
 
         # Download Excel
+        excel_bytes = gerar_excel_formatado(consolidado)
         st.download_button(
-            "⬇️ Baixar Premiações",
-            data=gerar_excel_download(prem, "Premiações"),
-            file_name="Premiacoes.xlsx",
+            "📥 Baixar Excel Consolidado",
+            data=excel_bytes,
+            file_name="faturamento_consolidado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
