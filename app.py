@@ -17,11 +17,6 @@ MODELO_PREMIACAO_PADRAO = pd.DataFrame({
 
 @st.cache_data(show_spinner=False)
 def read_file(file: Optional[st.runtime.uploaded_file_manager.UploadedFile], fallback_path: str) -> pd.DataFrame:
-    """
-    Lê arquivo CSV ou Excel (xlsx, xls).
-    Se file for None, tenta ler fallback_path.
-    Retorna DataFrame vazio e exibe erro se falhar.
-    """
     if file is None:
         if os.path.exists(fallback_path):
             try:
@@ -74,7 +69,6 @@ def read_file(file: Optional[st.runtime.uploaded_file_manager.UploadedFile], fal
         return pd.DataFrame()
 
 def validar_colunas(df: pd.DataFrame, colunas_necessarias: list, nome_arquivo: str) -> bool:
-    """Verifica se todas as colunas necessárias existem no DataFrame."""
     faltantes = [c for c in colunas_necessarias if c not in df.columns]
     if faltantes:
         st.error(f"Arquivo '{nome_arquivo}' está faltando colunas necessárias: {faltantes}")
@@ -82,26 +76,19 @@ def validar_colunas(df: pd.DataFrame, colunas_necessarias: list, nome_arquivo: s
     return True
 
 def filtrar_faturamento(df_desvend: pd.DataFrame, df_taloes: pd.DataFrame) -> pd.DataFrame:
-    """Filtra registros de faturamento pela lista de lojas válidas."""
-    lojas_validas = df_taloes['CodFil'].dropna().unique()
-    return df_desvend[df_desvend['loja'].isin(lojas_validas)]
+    lojas_validas = df_taloes['CODFIL'].dropna().unique()
+    return df_desvend[df_desvend['LOJA'].isin(lojas_validas)]
 
 def calcular_premiacao(df_filtrado: pd.DataFrame, premiacoes: list) -> pd.DataFrame:
-    """
-    Calcula premiação para cada consultor.
-    premiacoes: lista de dicts {'nome', 'percentual', 'valor_fixo'}
-    """
-    resumo = df_filtrado.groupby('consultor')['valor'].apply(lambda x: x.astype(float).sum()).reset_index()
+    resumo = df_filtrado.groupby('VENDEDOR')['TOTAL VENDAS'].apply(lambda x: pd.to_numeric(x, errors='coerce').fillna(0).sum()).reset_index()
     resumo['Premiação Calculada'] = 0.0
 
     for faixa in premiacoes:
-        # premiação = soma(valor) * percentual/100 + valor_fixo
-        resumo['Premiação Calculada'] += resumo['valor'] * (faixa['percentual'] / 100) + faixa['valor_fixo']
+        resumo['Premiação Calculada'] += resumo['TOTAL VENDAS'] * (faixa['percentual'] / 100) + faixa['valor_fixo']
 
     return resumo
 
 def destaque_premiacao(val):
-    """Colorir células com premiação acima de um limite."""
     if val > 500:
         color = 'background-color: #9AE69A'  # verde claro
     elif val > 200:
@@ -111,7 +98,6 @@ def destaque_premiacao(val):
     return color
 
 def exportar_excel(df: pd.DataFrame) -> bytes:
-    """Exporta DataFrame para arquivo Excel em bytes."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
@@ -125,17 +111,16 @@ def main():
     with st.sidebar.expander("Upload dos arquivos"):
         desvend_file = st.file_uploader("Upload DesVend (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com dados de vendas")
         taloes_file = st.file_uploader("Upload Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com lojas válidas")
-        # Upload DesVend AUDITORIA_AUTOMATICA desabilitado - sempre usa modelo padrão embutido
+        # Upload para DesVend AUDITORIA_AUTOMATICA desabilitado
 
     with st.spinner("Lendo arquivos..."):
         df_desvend = read_file(desvend_file, FALLBACK_DESVEND)
         df_taloes = read_file(taloes_file, FALLBACK_TALOES)
         df_auditoria = MODELO_PREMIACAO_PADRAO.copy()
 
-    # Valida colunas necessárias
-    if not validar_colunas(df_desvend, ['loja', 'consultor', 'valor'], 'DesVend'):
+    if not validar_colunas(df_desvend, ['LOJA', 'VENDEDOR', 'TOTAL VENDAS'], 'DesVend'):
         st.stop()
-    if not validar_colunas(df_taloes, ['CodFil'], 'Talões Pendentes'):
+    if not validar_colunas(df_taloes, ['CODFIL'], 'Talões Pendentes'):
         st.stop()
 
     tabs = st.tabs(["Faturamento", "Premiação"])
@@ -147,12 +132,12 @@ def main():
         if df_filtrado.empty:
             st.warning("Nenhum dado após filtro de lojas.")
         else:
-            consultores = sorted(df_filtrado['consultor'].dropna().unique())
-            with st.sidebar.form(key="filtro_consultores"):
-                consultor_selec = st.multiselect("Filtrar por Consultores", options=consultores, default=consultores)
+            vendedores = sorted(df_filtrado['VENDEDOR'].dropna().unique())
+            with st.sidebar.form(key="filtro_vendedores"):
+                vendedor_selec = st.multiselect("Filtrar por Vendedores", options=vendedores, default=vendedores)
                 btn_filtro = st.form_submit_button("Aplicar filtro")
             if btn_filtro:
-                df_filtrado = df_filtrado[df_filtrado['consultor'].isin(consultor_selec)]
+                df_filtrado = df_filtrado[df_filtrado['VENDEDOR'].isin(vendedor_selec)]
 
             st.dataframe(df_filtrado.reset_index(drop=True))
 
@@ -199,18 +184,15 @@ def main():
                     erro_prem = True
                     break
             if not erro_prem:
-                if 'consultor' not in df_filtrado.columns or 'valor' not in df_filtrado.columns:
-                    st.error("Arquivo DesVend deve conter as colunas 'consultor' e 'valor' para calcular premiação.")
-                else:
-                    df_prem = calcular_premiacao(df_filtrado, premiacoes)
-                    st.markdown("### Resultado da Premiação")
-                    st.dataframe(df_prem.style.applymap(destaque_premiacao, subset=['Premiação Calculada']))
+                df_prem = calcular_premiacao(df_filtrado, premiacoes)
+                st.markdown("### Resultado da Premiação")
+                st.dataframe(df_prem.style.applymap(destaque_premiacao, subset=['Premiação Calculada']))
 
-                    csv_prem = df_prem.to_csv(index=False).encode('utf-8')
-                    xlsx_prem = exportar_excel(df_prem)
+                csv_prem = df_prem.to_csv(index=False).encode('utf-8')
+                xlsx_prem = exportar_excel(df_prem)
 
-                    st.download_button("Download CSV Premiação", data=csv_prem, file_name="premiacao.csv", mime="text/csv")
-                    st.download_button("Download Excel Premiação", data=xlsx_prem, file_name="premiacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("Download CSV Premiação", data=csv_prem, file_name="premiacao.csv", mime="text/csv")
+                st.download_button("Download Excel Premiação", data=xlsx_prem, file_name="premiacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 if __name__ == "__main__":
     main()
