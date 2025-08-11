@@ -1,125 +1,114 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import matplotlib.pyplot as plt
 from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-from openpyxl.utils import get_column_letter
-import os
 
 # Configuração da página
-st.set_page_config(page_title="Sistema de Premiação", layout="wide")
+st.set_page_config(page_title="Relatório de Faturamento & Premiações", layout="wide")
 
-# Caminho para fallback local
-FALLBACK_PATH = os.path.join("data", "DesVend AUDITORIA_AUTOMATICA.xlsx")
+st.title("📊 Relatório de Faturamento & Premiações")
 
-@st.cache_data
-def read_auditoria(uploaded_file=None, fallback_path=None):
-    """Lê a planilha AUDITORIA e retorna DataFrame limpo."""
-    if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file, sheet_name="AUDITORIA")
-    elif fallback_path and os.path.exists(fallback_path):
-        df = pd.read_excel(fallback_path, sheet_name="AUDITORIA")
-    else:
-        return pd.DataFrame()
+# Criar abas
+aba_faturamento, aba_premiacoes = st.tabs(["Faturamento", "Premiações"])
 
-    # Seleciona apenas as colunas relevantes
-    df = df.iloc[2:, [0,1,2,3,5,6]]
-    df.columns = ["LOJA", "COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]
-
-    # Remove linhas totalmente vazias
-    df = df.dropna(how="all")
-
-    # Converte colunas numéricas
-    for col in ["COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Remove linhas onde LOJA esteja vazia
-    df = df.dropna(subset=["LOJA"], how="all")
-
-    return df
-
-def gerar_excel_download_formatado(df):
-    """Gera o arquivo Excel com formatação automática."""
+def gerar_excel_download(df):
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Relatório")
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Faturamento', index=False)
+        workbook = writer.book
+        worksheet = writer.sheets['Faturamento']
+
+        # Ajuste automático da largura
+        for idx, col in enumerate(df.columns):
+            col_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(idx, idx, col_width)
+
+        # Formatos
+        formato_moeda = workbook.add_format({'num_format': 'R$ #,##0.00'})
+        formato_percentual = workbook.add_format({'num_format': '0.0%'})
+        formato_header = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9'})
+
+        # Cabeçalho cinza
+        worksheet.set_row(0, None, formato_header)
+
+        # Aplicar formatos
+        colunas_moeda = ["COTA TOTAL", "TOTAL VENDAS", "SALDO COTA", "TICK MEDIO"]
+        colunas_percentual = ["% VENDAS", "% SALDO COTA"]
+
+        for idx, col in enumerate(df.columns):
+            if col in colunas_moeda:
+                worksheet.set_column(idx, idx, None, formato_moeda)
+            elif col in colunas_percentual:
+                worksheet.set_column(idx, idx, None, formato_percentual)
 
     output.seek(0)
-    wb = load_workbook(output)
-    ws = wb.active
+    return output
 
-    # Ajustar largura das colunas
-    for col in ws.columns:
-        max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-        ws.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
+with aba_faturamento:
+    st.subheader("📈 Faturamento")
 
-    # Ajustar altura das linhas
-    for row in ws.iter_rows():
-        ws.row_dimensions[row[0].row].height = 18
+    # Upload do arquivo DesVend
+    arquivo = st.file_uploader("Envie a planilha DesVend", type=["xlsx", "xls"])
 
-    # Sombreamento cinza na coluna LOJA
-    gray_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-    for row in range(2, ws.max_row + 1):
-        ws[f"A{row}"].fill = gray_fill
+    if arquivo is not None:
+        df = pd.read_excel(arquivo)
 
-    # Formatar como moeda
-    col_moeda = ["COTA", "VENDAS", "VENDAS ATUALIZADAS"]
-    for idx, col_name in enumerate(df.columns, start=1):
-        if col_name in col_moeda:
-            for row in range(2, ws.max_row + 1):
-                ws.cell(row=row, column=idx).number_format = 'R$ #,##0.00'
+        colunas_necessarias = ["LOJA", "COTA TOTAL", "TOTAL VENDAS", "SALDO COTA TOTAL", "QUANT VENDAS"]
+        if all(col in df.columns for col in colunas_necessarias):
+            consolidado = df.groupby("LOJA", as_index=False).agg({
+                "COTA TOTAL": "sum",
+                "TOTAL VENDAS": "sum",
+                "SALDO COTA TOTAL": "sum",
+                "QUANT VENDAS": "sum"
+            })
 
-    # Formatar como percentual
-    col_perc = ["% VENDAS", "% COTA ATUAL"]
-    for idx, col_name in enumerate(df.columns, start=1):
-        if col_name in col_perc:
-            for row in range(2, ws.max_row + 1):
-                ws.cell(row=row, column=idx).number_format = '0.0%'
+            consolidado["% VENDAS"] = consolidado["TOTAL VENDAS"] / consolidado["COTA TOTAL"]
+            consolidado["% SALDO COTA"] = consolidado["SALDO COTA TOTAL"] / consolidado["COTA TOTAL"]
+            consolidado["TICK MEDIO"] = consolidado["TOTAL VENDAS"] / consolidado["QUANT VENDAS"]
 
-    output_final = BytesIO()
-    wb.save(output_final)
-    return output_final.getvalue()
+            consolidado.rename(columns={"SALDO COTA TOTAL": "SALDO COTA"}, inplace=True)
 
-def formatar_dataframe_para_exibicao(df):
-    """Retorna DataFrame formatado visualmente para exibição no Streamlit."""
-    df_formatado = df.copy()
-    # Formata moedas
-    for col in ["COTA", "VENDAS", "VENDAS ATUALIZADAS"]:
-        df_formatado[col] = df_formatado[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
-    # Formata percentuais
-    for col in ["% VENDAS", "% COTA ATUAL"]:
-        df_formatado[col] = df_formatado[col].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "")
-    return df_formatado
+            # Formatar para exibição no Streamlit
+            def moeda(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            def perc(v): return f"{v:.1%}"
 
-# Interface principal
-st.title("📊 Sistema de Premiação - Relatório AUDITORIA")
+            tabela_formatada = consolidado.copy()
+            tabela_formatada["COTA TOTAL"] = tabela_formatada["COTA TOTAL"].apply(moeda)
+            tabela_formatada["TOTAL VENDAS"] = tabela_formatada["TOTAL VENDAS"].apply(moeda)
+            tabela_formatada["SALDO COTA"] = tabela_formatada["SALDO COTA"].apply(moeda)
+            tabela_formatada["% VENDAS"] = tabela_formatada["% VENDAS"].apply(perc)
+            tabela_formatada["% SALDO COTA"] = tabela_formatada["% SALDO COTA"].apply(perc)
+            tabela_formatada["TICK MEDIO"] = tabela_formatada["TICK MEDIO"].apply(moeda)
 
-uploaded_file = st.file_uploader("Envie o arquivo Excel", type=["xlsx"])
-df = read_auditoria(uploaded_file, fallback_path=FALLBACK_PATH)
+            st.dataframe(tabela_formatada, use_container_width=True)
 
-if not df.empty:
-    st.subheader("Tabela Consolidada")
-    st.dataframe(formatar_dataframe_para_exibicao(df), use_container_width=True)
+            # Gráfico de barras
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.bar(consolidado["LOJA"], consolidado["% VENDAS"] * 100, color="#4CAF50")
+            ax.set_ylabel("% Vendas")
+            ax.set_xlabel("Loja")
+            ax.set_title("Percentual de Vendas por Loja")
+            ax.set_ylim(0, 120)
 
-    # Agrupar por LOJA para o gráfico
-    df_loja = df.groupby("LOJA", as_index=False).agg({"VENDAS": "sum"})
+            for i, v in enumerate(consolidado["% VENDAS"] * 100):
+                ax.text(i, v + 1, f"{v:.1f}%", ha="center")
 
-    st.subheader("Gráfico de Vendas por Loja")
-    fig = px.bar(df_loja.sort_values("VENDAS", ascending=False),
-                 x="LOJA", y="VENDAS",
-                 text=df_loja["VENDAS"].apply(lambda x: f"R$ {x:,.0f}"),
-                 labels={"LOJA": "Loja", "VENDAS": "Vendas (R$)"},
-                 title="Vendas por Loja")
-    fig.update_traces(textposition='outside', marker_color='royalblue')
-    st.plotly_chart(fig, use_container_width=True)
+            st.pyplot(fig)
 
-    # Botão para download do Excel formatado
-    st.download_button(
-        label="📥 Baixar Excel Consolidado",
-        data=gerar_excel_download_formatado(df),
-        file_name="relatorio_auditoria.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-else:
-    st.warning("Nenhum dado encontrado. Envie um arquivo válido.")
+            # Botão para download do Excel
+            st.download_button(
+                label="📥 Baixar Excel Consolidado",
+                data=gerar_excel_download(consolidado),
+                file_name="Faturamento_Consolidado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        else:
+            st.error("⚠️ A planilha não contém todas as colunas necessárias.")
+
+    else:
+        st.info("📂 Envie o arquivo para visualizar o relatório.")
+
+with aba_premiacoes:
+    st.subheader("🏆 Premiações")
+    st.info("Área de premiações ainda em desenvolvimento.")
