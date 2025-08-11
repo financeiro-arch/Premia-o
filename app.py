@@ -1,40 +1,91 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
+import os
 
 FALLBACK_DESVEND = '/mnt/data/DesVend.CSV'
 FALLBACK_TALOES = '/mnt/data/TALÕES PENDENTES.xlsx'
 FALLBACK_AUDITORIA = '/mnt/data/DesVend AUDITORIA_AUTOMATICA.xlsx'
 
 @st.cache_data(show_spinner=False)
-def read_csv_either(uploaded, fallback_path):
-    if uploaded is not None:
-        try:
-            return pd.read_csv(uploaded, sep=None, engine='python', dtype=str, encoding='utf-8')
-        except UnicodeDecodeError:
-            try:
-                return pd.read_csv(uploaded, sep=None, engine='python', dtype=str, encoding='latin1')
-            except UnicodeDecodeError:
-                return pd.read_csv(uploaded, sep=None, engine='python', dtype=str, encoding='cp1252')
-        except Exception as e:
-            st.error(f"Erro ao ler CSV: {e}")
-            return None
+def read_desvend(file):
+    if file is None:
+        # fallback
+        ext = os.path.splitext(FALLBACK_DESVEND)[1].lower()
+        if ext in ['.xls', '.xlsx']:
+            return pd.read_excel(FALLBACK_DESVEND, dtype=str)
+        else:
+            return pd.read_csv(FALLBACK_DESVEND, dtype=str, sep=None, engine='python', encoding='latin1')
     else:
-        return pd.read_csv(fallback_path, sep=None, engine='python', dtype=str)
+        fname = file.name.lower()
+        try:
+            if fname.endswith('.csv'):
+                # tenta ler CSV com alguns encodings
+                try:
+                    return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='latin1')
+                    except UnicodeDecodeError:
+                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='cp1252')
+            elif fname.endswith(('.xls', '.xlsx')):
+                return pd.read_excel(file, dtype=str)
+            else:
+                st.error("Formato de arquivo DesVend não suportado. Use CSV, XLS ou XLSX.")
+                return None
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo DesVend: {e}")
+            return None
 
 @st.cache_data(show_spinner=False)
-def read_excel_either(uploaded, fallback_path):
-    if uploaded is not None:
-        try:
-            return pd.read_excel(uploaded, dtype=str)
-        except Exception as e:
-            st.error(f"Erro ao ler Excel: {e}")
-            return None
+def read_taloes(file):
+    if file is None:
+        ext = os.path.splitext(FALLBACK_TALOES)[1].lower()
+        if ext in ['.xls', '.xlsx']:
+            return pd.read_excel(FALLBACK_TALOES, dtype=str)
+        else:
+            return pd.read_csv(FALLBACK_TALOES, dtype=str, sep=None, engine='python', encoding='latin1')
     else:
-        return pd.read_excel(fallback_path, dtype=str)
+        fname = file.name.lower()
+        try:
+            if fname.endswith('.csv'):
+                try:
+                    return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='latin1')
+                    except UnicodeDecodeError:
+                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='cp1252')
+            elif fname.endswith(('.xls', '.xlsx')):
+                return pd.read_excel(file, dtype=str)
+            else:
+                st.error("Formato de arquivo Talões Pendentes não suportado. Use CSV, XLS ou XLSX.")
+                return None
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo Talões Pendentes: {e}")
+            return None
+
+@st.cache_data(show_spinner=False)
+def read_auditoria(file):
+    if file is None:
+        try:
+            return pd.read_excel(FALLBACK_AUDITORIA, dtype=str)
+        except Exception:
+            return pd.DataFrame()
+    else:
+        try:
+            return pd.read_excel(file, dtype=str)
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo Auditoria: {e}")
+            return pd.DataFrame()
 
 def filtrar_faturamento(df_desvend, df_taloes):
-    # Filtra DesVend apenas com lojas presentes em CodFil dos taloes
+    if 'CodFil' not in df_taloes.columns:
+        st.error("Arquivo Talões Pendentes não contém a coluna 'CodFil'")
+        return pd.DataFrame()
+    if 'loja' not in df_desvend.columns:
+        st.error("Arquivo DesVend não contém a coluna 'loja'")
+        return pd.DataFrame()
+
     lojas_validas = df_taloes['CodFil'].dropna().unique()
     df_filtrado = df_desvend[df_desvend['loja'].isin(lojas_validas)]
     return df_filtrado
@@ -43,19 +94,20 @@ def main():
     st.set_page_config(page_title="Sistema de Faturamento e Premiação", layout="wide")
     st.title("Sistema de Faturamento e Premiação")
 
-    # Upload dos arquivos
     with st.sidebar.expander("Upload dos arquivos"):
-        csv_upload = st.file_uploader("Upload DesVend.CSV", type=["csv"])
-        xlsx_taloes_upload = st.file_uploader("Upload Talões Pendentes.xlsx", type=["xlsx", "xls"])
-        xlsx_auditoria_upload = st.file_uploader("Upload DesVend AUDITORIA_AUTOMATICA.xlsx", type=["xlsx", "xls"])
+        desvend_file = st.file_uploader("Upload DesVend (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"])
+        taloes_file = st.file_uploader("Upload Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"])
+        auditoria_file = st.file_uploader("Upload DesVend AUDITORIA_AUTOMATICA.xlsx", type=["xls", "xlsx"])
 
-    # Ler arquivos
-    df_desvend = read_csv_either(csv_upload, FALLBACK_DESVEND)
-    df_taloes = read_excel_either(xlsx_taloes_upload, FALLBACK_TALOES)
-    df_auditoria = read_excel_either(xlsx_auditoria_upload, FALLBACK_AUDITORIA)
+    df_desvend = read_desvend(desvend_file)
+    df_taloes = read_taloes(taloes_file)
+    df_auditoria = read_auditoria(auditoria_file)
 
-    if df_desvend is None or df_taloes is None:
-        st.error("Por favor, faça o upload dos arquivos DesVend.CSV e Talões Pendentes.xlsx corretamente.")
+    if df_desvend is None or df_desvend.empty:
+        st.error("Arquivo DesVend inválido ou não carregado.")
+        return
+    if df_taloes is None or df_taloes.empty:
+        st.error("Arquivo Talões Pendentes inválido ou não carregado.")
         return
 
     tabs = st.tabs(["Faturamento", "Premiação"])
@@ -64,28 +116,24 @@ def main():
         st.header("Faturamento")
         df_filtrado = filtrar_faturamento(df_desvend, df_taloes)
 
-        # Filtro por consultor
-        if 'consultor' in df_filtrado.columns:
-            consultores = df_filtrado['consultor'].dropna().unique()
-            consultor_selec = st.multiselect("Selecione Consultor(es)", options=consultores, default=consultores)
-            df_filtrado = df_filtrado[df_filtrado['consultor'].isin(consultor_selec)]
+        if df_filtrado.empty:
+            st.warning("Nenhum dado encontrado após filtro de lojas.")
+        else:
+            if 'consultor' in df_filtrado.columns:
+                consultores = df_filtrado['consultor'].dropna().unique()
+                consultor_selec = st.multiselect("Selecione Consultor(es)", options=consultores, default=consultores)
+                df_filtrado = df_filtrado[df_filtrado['consultor'].isin(consultor_selec)]
 
-        st.dataframe(df_filtrado.reset_index(drop=True))
+            st.dataframe(df_filtrado.reset_index(drop=True))
 
-        csv_fat = df_filtrado.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV Faturamento", data=csv_fat, file_name="faturamento_filtrado.csv", mime="text/csv")
+            csv_fat = df_filtrado.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV Faturamento", data=csv_fat, file_name="faturamento_filtrado.csv", mime="text/csv")
 
     with tabs[1]:
         st.header("Premiação")
 
-        if df_auditoria is None:
-            st.warning("Upload do arquivo DesVend AUDITORIA_AUTOMATICA.xlsx não realizado. Será usado modelo vazio.")
-            df_auditoria = pd.DataFrame()  # ou crie uma estrutura vazia padrão
-
-        # Reaplicar filtro de lojas no faturamento para base da premiação
         df_filtrado = filtrar_faturamento(df_desvend, df_taloes)
 
-        # Campo para inserir percentuais de premiação (faixas)
         st.subheader("Configuração de premiação")
         prem_config_txt = st.text_area(
             "Informe as faixas no formato: Nome,Percentual(%),ValorFixo\nExemplo:\nFaixa 1,5,100\nFaixa 2,10,200",
@@ -105,17 +153,13 @@ def main():
                 except:
                     st.error(f"Erro ao ler linha de premiação: {linha}")
 
-        # Aqui você pode implementar a lógica de cálculo conforme seu modelo.
-        # Exemplo simples: somar percentual * valor de venda + valor fixo por consultor.
-
         if 'consultor' not in df_filtrado.columns or 'valor' not in df_filtrado.columns:
-            st.warning("Arquivo DesVend.CSV deve conter colunas 'consultor' e 'valor' para calcular premiação.")
+            st.warning("Arquivo DesVend deve conter colunas 'consultor' e 'valor' para cálculo de premiação.")
         else:
             resumo = df_filtrado.groupby('consultor')['valor'].apply(lambda x: x.astype(float).sum()).reset_index()
             resumo['Premiação Calculada'] = 0.0
 
             for faixa in prem_config:
-                # Exemplo: aplica percentual e soma valor fixo para todos consultores
                 resumo['Premiação Calculada'] += resumo['valor'] * faixa['percentual'] / 100 + faixa['valor_fixo']
 
             st.dataframe(resumo)
