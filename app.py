@@ -81,6 +81,17 @@ def gerar_excel_download_formatado(df):
     wb.save(output_final)
     return output_final.getvalue()
 
+def formatar_dataframe_para_exibicao(df):
+    """Retorna DataFrame formatado visualmente para exibição no Streamlit."""
+    df_formatado = df.copy()
+    # Formata moedas
+    for col in ["COTA", "VENDAS", "VENDAS ATUALIZADAS"]:
+        df_formatado[col] = df_formatado[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
+    # Formata percentuais
+    for col in ["% VENDAS", "% COTA ATUAL"]:
+        df_formatado[col] = df_formatado[col].apply(lambda x: f"{x*100:.1f}%" if pd.notnull(x) else "")
+    return df_formatado
+
 # Interface principal
 st.title("📊 Sistema de Premiação - Relatório AUDITORIA")
 
@@ -89,7 +100,7 @@ df = read_auditoria(uploaded_file, fallback_path=FALLBACK_PATH)
 
 if not df.empty:
     st.subheader("Tabela Consolidada")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(formatar_dataframe_para_exibicao(df), use_container_width=True)
 
     # Agrupar por LOJA para o gráfico
     df_loja = df.groupby("LOJA", as_index=False).agg({"VENDAS": "sum"})
