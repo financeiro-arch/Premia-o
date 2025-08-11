@@ -4,12 +4,18 @@ import os
 
 FALLBACK_DESVEND = '/mnt/data/DesVend.CSV'
 FALLBACK_TALOES = '/mnt/data/TALÕES PENDENTES.xlsx'
-FALLBACK_AUDITORIA = '/mnt/data/DesVend AUDITORIA_AUTOMATICA.xlsx'
+
+# Modelo padrão embutido da planilha DesVend AUDITORIA_AUTOMATICA
+# Substitua pelos dados reais do seu modelo, esse é só um exemplo simples
+MODELO_PREMIACAO_PADRAO = pd.DataFrame({
+    'Faixa': ['Faixa 1', 'Faixa 2'],
+    'Percentual': [5, 10],
+    'ValorFixo': [100, 200]
+})
 
 @st.cache_data(show_spinner=False)
 def read_desvend(file):
     if file is None:
-        # fallback
         ext = os.path.splitext(FALLBACK_DESVEND)[1].lower()
         if ext in ['.xls', '.xlsx']:
             return pd.read_excel(FALLBACK_DESVEND, dtype=str)
@@ -19,7 +25,6 @@ def read_desvend(file):
         fname = file.name.lower()
         try:
             if fname.endswith('.csv'):
-                # tenta ler CSV com alguns encodings
                 try:
                     return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='utf-8')
                 except UnicodeDecodeError:
@@ -66,17 +71,14 @@ def read_taloes(file):
 
 @st.cache_data(show_spinner=False)
 def read_auditoria(file):
-    if file is None:
-        try:
-            return pd.read_excel(FALLBACK_AUDITORIA, dtype=str)
-        except Exception:
-            return pd.DataFrame()
-    else:
+    if file is not None:
         try:
             return pd.read_excel(file, dtype=str)
         except Exception as e:
             st.error(f"Erro ao ler arquivo Auditoria: {e}")
-            return pd.DataFrame()
+            return MODELO_PREMIACAO_PADRAO
+    else:
+        return MODELO_PREMIACAO_PADRAO
 
 def filtrar_faturamento(df_desvend, df_taloes):
     if 'CodFil' not in df_taloes.columns:
@@ -97,7 +99,7 @@ def main():
     with st.sidebar.expander("Upload dos arquivos"):
         desvend_file = st.file_uploader("Upload DesVend (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"])
         taloes_file = st.file_uploader("Upload Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"])
-        auditoria_file = st.file_uploader("Upload DesVend AUDITORIA_AUTOMATICA.xlsx", type=["xls", "xlsx"])
+        auditoria_file = st.file_uploader("Upload DesVend AUDITORIA_AUTOMATICA.xlsx (opcional)", type=["xls", "xlsx"])
 
     df_desvend = read_desvend(desvend_file)
     df_taloes = read_taloes(taloes_file)
