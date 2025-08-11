@@ -125,20 +125,12 @@ def main():
     with st.sidebar.expander("Upload dos arquivos"):
         desvend_file = st.file_uploader("Upload DesVend (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com dados de vendas")
         taloes_file = st.file_uploader("Upload Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com lojas válidas")
-        auditoria_file = st.file_uploader("Upload DesVend AUDITORIA_AUTOMATICA.xlsx (opcional)", type=["xls", "xlsx"], help="Arquivo modelo premiação")
+        # Upload DesVend AUDITORIA_AUTOMATICA desabilitado - sempre usa modelo padrão embutido
 
     with st.spinner("Lendo arquivos..."):
         df_desvend = read_file(desvend_file, FALLBACK_DESVEND)
         df_taloes = read_file(taloes_file, FALLBACK_TALOES)
-        # Auditoria opcional: se não enviar, usa padrão embutido
-        df_auditoria = pd.DataFrame()
-        if auditoria_file is not None:
-            try:
-                df_auditoria = pd.read_excel(auditoria_file, dtype=str)
-            except Exception as e:
-                st.warning(f"Erro ao ler arquivo Auditoria: {e}")
-        if df_auditoria.empty:
-            df_auditoria = MODELO_PREMIACAO_PADRAO
+        df_auditoria = MODELO_PREMIACAO_PADRAO.copy()
 
     # Valida colunas necessárias
     if not validar_colunas(df_desvend, ['loja', 'consultor', 'valor'], 'DesVend'):
@@ -219,7 +211,6 @@ def main():
 
                     st.download_button("Download CSV Premiação", data=csv_prem, file_name="premiacao.csv", mime="text/csv")
                     st.download_button("Download Excel Premiação", data=xlsx_prem, file_name="premiacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 
 if __name__ == "__main__":
     main()
