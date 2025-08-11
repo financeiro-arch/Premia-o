@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.express as px
 import os
 from io import BytesIO
 
@@ -38,23 +38,6 @@ def processar_dados(df):
     df_grouped = df_grouped.sort_values('TOTAL VENDAS', ascending=False)
     return df_grouped
 
-def gerar_grafico(df_grouped):
-    fig, ax = plt.subplots(figsize=(10,6))
-    bars = ax.bar(df_grouped['LOJA'].astype(str), df_grouped['TOTAL VENDAS'], color='royalblue')
-
-    # Adicionar rótulos
-    for bar, val, pct in zip(bars, df_grouped['TOTAL VENDAS'], df_grouped['%']):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                f"R$ {val:,.0f}\n({pct:.1f}%)",
-                ha='center', va='bottom', fontsize=9)
-
-    ax.set_title('Faturamento por Loja', fontsize=16, fontweight='bold')
-    ax.set_ylabel('Faturamento (R$)', fontsize=12)
-    ax.set_xlabel('Loja', fontsize=12)
-    ax.grid(axis='y', linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    return fig
-
 def gerar_excel_download(df_grouped):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -75,10 +58,18 @@ if not df.empty:
     st.subheader("Tabela Consolidada")
     st.dataframe(df_grouped, use_container_width=True)
     
-    # Mostrar gráfico
+    # Criar gráfico com Plotly
     st.subheader("Gráfico de Faturamento")
-    fig = gerar_grafico(df_grouped)
-    st.pyplot(fig)
+    fig = px.bar(df_grouped, 
+                 x=df_grouped['LOJA'].astype(str), 
+                 y="TOTAL VENDAS", 
+                 text=df_grouped.apply(lambda row: f"R$ {row['TOTAL VENDAS']:,.0f} ({row['%']:.1f}%)", axis=1),
+                 labels={"LOJA": "Loja", "TOTAL VENDAS": "Faturamento (R$)"},
+                 title="Faturamento por Loja")
+    fig.update_traces(textposition='outside', marker_color='royalblue')
+    fig.update_layout(yaxis_title="Faturamento (R$)", xaxis_title="Loja", uniformtext_minsize=8, uniformtext_mode='hide')
+    
+    st.plotly_chart(fig, use_container_width=True)
     
     # Botão de download
     st.download_button(
