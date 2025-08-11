@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
+import csv
 
 FALLBACK_DESVEND = '/mnt/data/DesVend.CSV'
 FALLBACK_TALOES = '/mnt/data/TALÕES PENDENTES.xlsx'
 
 # Modelo padrão embutido da planilha DesVend AUDITORIA_AUTOMATICA
-# Substitua pelos dados reais do seu modelo, esse é só um exemplo simples
 MODELO_PREMIACAO_PADRAO = pd.DataFrame({
     'Faixa': ['Faixa 1', 'Faixa 2'],
     'Percentual': [5, 10],
@@ -16,58 +17,100 @@ MODELO_PREMIACAO_PADRAO = pd.DataFrame({
 @st.cache_data(show_spinner=False)
 def read_desvend(file):
     if file is None:
-        ext = os.path.splitext(FALLBACK_DESVEND)[1].lower()
-        if ext in ['.xls', '.xlsx']:
-            return pd.read_excel(FALLBACK_DESVEND, dtype=str)
-        else:
-            return pd.read_csv(FALLBACK_DESVEND, dtype=str, sep=None, engine='python', encoding='latin1')
-    else:
-        fname = file.name.lower()
-        try:
-            if fname.endswith('.csv'):
-                try:
-                    return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='utf-8')
-                except UnicodeDecodeError:
+        if os.path.exists(FALLBACK_DESVEND):
+            ext = os.path.splitext(FALLBACK_DESVEND)[1].lower()
+            try:
+                if ext in ['.xls', '.xlsx']:
+                    return pd.read_excel(FALLBACK_DESVEND, dtype=str)
+                else:
+                    with open(FALLBACK_DESVEND, 'r', encoding='latin1') as f:
+                        sample = f.read(1024)
+                    delimiter = ','
                     try:
-                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='latin1')
-                    except UnicodeDecodeError:
-                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='cp1252')
-            elif fname.endswith(('.xls', '.xlsx')):
-                return pd.read_excel(file, dtype=str)
+                        delimiter = csv.Sniffer().sniff(sample).delimiter
+                    except Exception:
+                        delimiter = ','
+                    return pd.read_csv(FALLBACK_DESVEND, sep=delimiter, dtype=str, encoding='latin1')
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo padrão DesVend: {e}")
+                return pd.DataFrame()
+        else:
+            st.error("Arquivo padrão DesVend não encontrado e nenhum upload realizado.")
+            return pd.DataFrame()
+
+    fname = file.name.lower()
+    try:
+        if fname.endswith('.csv'):
+            content = file.getvalue() if hasattr(file, 'getvalue') else file.read()
+            if isinstance(content, bytes):
+                try:
+                    content_str = content.decode('utf-8')
+                except UnicodeDecodeError:
+                    content_str = content.decode('latin1')
             else:
-                st.error("Formato de arquivo DesVend não suportado. Use CSV, XLS ou XLSX.")
-                return None
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo DesVend: {e}")
-            return None
+                content_str = content
+            try:
+                delimiter = csv.Sniffer().sniff(content_str.splitlines()[0]).delimiter
+            except Exception:
+                delimiter = ','
+            return pd.read_csv(io.StringIO(content_str), sep=delimiter, dtype=str)
+        elif fname.endswith(('.xls', '.xlsx')):
+            return pd.read_excel(file, dtype=str)
+        else:
+            st.error("Formato do arquivo DesVend não suportado. Use CSV, XLS ou XLSX.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo DesVend: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
 def read_taloes(file):
     if file is None:
-        ext = os.path.splitext(FALLBACK_TALOES)[1].lower()
-        if ext in ['.xls', '.xlsx']:
-            return pd.read_excel(FALLBACK_TALOES, dtype=str)
-        else:
-            return pd.read_csv(FALLBACK_TALOES, dtype=str, sep=None, engine='python', encoding='latin1')
-    else:
-        fname = file.name.lower()
-        try:
-            if fname.endswith('.csv'):
-                try:
-                    return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='utf-8')
-                except UnicodeDecodeError:
+        if os.path.exists(FALLBACK_TALOES):
+            ext = os.path.splitext(FALLBACK_TALOES)[1].lower()
+            try:
+                if ext in ['.xls', '.xlsx']:
+                    return pd.read_excel(FALLBACK_TALOES, dtype=str)
+                else:
+                    with open(FALLBACK_TALOES, 'r', encoding='latin1') as f:
+                        sample = f.read(1024)
+                    delimiter = ','
                     try:
-                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='latin1')
-                    except UnicodeDecodeError:
-                        return pd.read_csv(file, dtype=str, sep=None, engine='python', encoding='cp1252')
-            elif fname.endswith(('.xls', '.xlsx')):
-                return pd.read_excel(file, dtype=str)
+                        delimiter = csv.Sniffer().sniff(sample).delimiter
+                    except Exception:
+                        delimiter = ','
+                    return pd.read_csv(FALLBACK_TALOES, sep=delimiter, dtype=str, encoding='latin1')
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo padrão Talões Pendentes: {e}")
+                return pd.DataFrame()
+        else:
+            st.error("Arquivo padrão Talões Pendentes não encontrado e nenhum upload realizado.")
+            return pd.DataFrame()
+
+    fname = file.name.lower()
+    try:
+        if fname.endswith('.csv'):
+            content = file.getvalue() if hasattr(file, 'getvalue') else file.read()
+            if isinstance(content, bytes):
+                try:
+                    content_str = content.decode('utf-8')
+                except UnicodeDecodeError:
+                    content_str = content.decode('latin1')
             else:
-                st.error("Formato de arquivo Talões Pendentes não suportado. Use CSV, XLS ou XLSX.")
-                return None
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo Talões Pendentes: {e}")
-            return None
+                content_str = content
+            try:
+                delimiter = csv.Sniffer().sniff(content_str.splitlines()[0]).delimiter
+            except Exception:
+                delimiter = ','
+            return pd.read_csv(io.StringIO(content_str), sep=delimiter, dtype=str)
+        elif fname.endswith(('.xls', '.xlsx')):
+            return pd.read_excel(file, dtype=str)
+        else:
+            st.error("Formato do arquivo Talões Pendentes não suportado. Use CSV, XLS ou XLSX.")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo Talões Pendentes: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
 def read_auditoria(file):
@@ -105,10 +148,10 @@ def main():
     df_taloes = read_taloes(taloes_file)
     df_auditoria = read_auditoria(auditoria_file)
 
-    if df_desvend is None or df_desvend.empty:
+    if df_desvend.empty:
         st.error("Arquivo DesVend inválido ou não carregado.")
         return
-    if df_taloes is None or df_taloes.empty:
+    if df_taloes.empty:
         st.error("Arquivo Talões Pendentes inválido ou não carregado.")
         return
 
