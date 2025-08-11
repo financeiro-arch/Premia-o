@@ -1,166 +1,131 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from pathlib import Path
+import os
 
-st.set_page_config(page_title="Sistema Faturamento & Premiação", layout="wide")
+# Caminho fixo para o arquivo DesVend salvo localmente
+FALLBACK_DESVEND = os.path.join("data", "DesVend AUDITORIA_AUTOMATICA.xlsx")
 
-# ---------- Helpers -------------------------------------------------
-FALLBACK_DESVEND = "/mnt/data/DesVend.CSV"
-FALLBACK_TALOES = "/mnt/data/TALÕES PENDENTES.xlsx"
+st.set_page_config(page_title="Sistema de Premiação", layout="wide")
 
 @st.cache_data
-def read_csv_either(uploaded, fallback_path):
-    if uploaded is not None:
-        return pd.read_csv(uploaded, sep=None, engine='python', dtype=str)
-    p = Path(fallback_path)
-    if p.exists():
-        return pd.read_csv(p, sep=None, engine='python', dtype=str)
-    return pd.DataFrame()
-
-@st.cache_data
-def read_excel_either(uploaded, fallback_path):
-    if uploaded is not None:
-        return pd.read_excel(uploaded, engine='openpyxl', dtype=str)
-    p = Path(fallback_path)
-    if p.exists():
-        return pd.read_excel(p, engine='openpyxl', dtype=str)
-    return pd.DataFrame()
-
-def find_column(df, candidates):
-    if df is None or df.empty:
-        return None
-    cols = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        if cand.lower() in cols:
-            return cols[cand.lower()]
-    for col in df.columns:
-        low = col.lower()
-        for cand in candidates:
-            if cand.lower() in low:
-                return col
-    return None
-
-def to_numeric_safe(s):
-    if pd.isna(s):
-        return 0.0
-    if isinstance(s, (int, float)):
-        return float(s)
-    ss = str(s).replace('.', '').replace(',', '.')
+def read_file(uploaded_file=None, fallback_path=None):
+    """
+    Lê arquivo CSV, XLS ou XLSX do upload ou fallback path.
+    Retorna DataFrame com colunas normalizadas.
+    """
+    df = pd.DataFrame()
     try:
-        return float(ss)
-    except:
-        return 0.0
+        if uploaded_file is not None:
+            file_name = uploaded_file.name.lower()
+            if file_name.endswith(".csv"):
+                # Tentar ler CSV com diferentes codificações
+                try:
+                    df = pd.read_csv(uploaded_file, sep=None, engine="python", encoding="utf-8", dtype=str)
+                except UnicodeDecodeError:
+                    # fallback para latin1
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, sep=None, engine="python", encoding="latin1", dtype=str)
+            elif file_name.endswith((".xls", ".xlsx")):
+                df = pd.read_excel(uploaded_file, dtype=str)
+            else:
+                st.error("Formato de arquivo não suportado.")
+                return pd.DataFrame()
+        elif fallback_path is not None:
+            if fallback_path.lower().endswith(".csv"):
+                df = pd.read_csv(fallback_path, sep=None, engine="python", encoding="latin1", dtype=str)
+            elif fallback_path.lower().endswith((".xls", ".xlsx")):
+                df = pd.read_excel(fallback_path, dtype=str)
+            else:
+                st.error("Arquivo de fallback com formato não suportado.")
+                return pd.DataFrame()
+        else:
+            st.error("Nenhum arquivo fornecido para leitura.")
+            return pd.DataFrame()
 
-# ---------- Sidebar --------------------------------------------------
-st.sidebar.title("Arquivos e configurações")
-csv_upload = st.sidebar.file_uploader("DesVend.CSV", type=['csv'])
-pend_upload = st.sidebar.file_uploader("Talões Pendentes (xlsx)", type=['xlsx'])
+        # Normaliza colunas
+        df.columns = df.columns.str.strip().str.upper()
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Configurações da premiação**")
-prm_text = st.sidebar.text_area(
-    "Tabelas de premiação (CSV - Nome,Percentual,ValorFixo)",
-    value="Faixa A,5,100\nFaixa B,3,50",
-    height=120
-)
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
+        return pd.DataFrame()
 
-apply_consultant_filter = st.sidebar.checkbox("Ativar filtro por consultor na aba Faturamento", value=True)
+    return df
 
-# ---------- Load files ------------------------------------------------
-with st.spinner("Carregando arquivos..."):
-    df_desvend = read_csv_either(csv_upload, FALLBACK_DESVEND)
-    df_taloes = read_excel_either(pend_upload, FALLBACK_TALOES)
+def faturamento_tab(df_desvend):
+    st.subheader("📈 Relatório de Faturamento")
 
-if df_desvend.empty:
-    st.warning("Arquivo DesVend não encontrado.")
-if df_taloes.empty:
-    st.warning("Arquivo Talões Pendentes não encontrado.")
+    colunas_necessarias = [
+        "LOJA", "VENDEDOR", "COTA TOTAL", "TOTAL VENDAS", "SALDO COTA TOTAL", "TICK MEDIO"
+    ]
 
-# ---------- Detect key columns ---------------------------------------
-loja_col = find_column(df_desvend, ['loja', 'codfil', 'filial', 'fil']) if not df_desvend.empty else None
-codfil_col = find_column(df_taloes, ['codfil', 'cod_fil', 'filial', 'loja']) if not df_taloes.empty else None
+    faltantes = [c for c in colunas_necessarias if c not in df_desvend.columns]
+    if faltantes:
+        st.error(f"Colunas ausentes no DesVend: {', '.join(faltantes)}")
+        return
 
-# ---------- Main Layout ----------------------------------------------
-st.title("Sistema de Faturamento e Premiação")
-tabs = st.tabs(["Faturamento", "Premiação"])
+    # Conversão para numérico
+    for col in ["COTA TOTAL", "TOTAL VENDAS", "SALDO COTA TOTAL", "TICK MEDIO"]:
+        df_desvend[col] = pd.to_numeric(df_desvend[col], errors="coerce")
 
-# ------------------- Aba Faturamento ---------------------------------
-with tabs[0]:
-    st.header("Faturamento")
-    if df_desvend.empty or df_taloes.empty:
-        st.info("Aguarde upload dos arquivos.")
+    # Cálculos de percentual
+    df_desvend["% TOTAL VENDAS"] = (df_desvend["TOTAL VENDAS"] / df_desvend["COTA TOTAL"]) * 100
+    df_desvend["% SALDO COTA"] = (df_desvend["SALDO COTA TOTAL"] / df_desvend["COTA TOTAL"]) * 100
+
+    df_resultado = df_desvend[[
+        "LOJA", "VENDEDOR", "COTA TOTAL", "TOTAL VENDAS", "% TOTAL VENDAS",
+        "SALDO COTA TOTAL", "% SALDO COTA", "TICK MEDIO"
+    ]]
+
+    st.dataframe(
+        df_resultado.style.format({
+            "COTA TOTAL": "R$ {:,.2f}",
+            "TOTAL VENDAS": "R$ {:,.2f}",
+            "% TOTAL VENDAS": "{:.2f}%",
+            "SALDO COTA TOTAL": "R$ {:,.2f}",
+            "% SALDO COTA": "{:.2f}%",
+            "TICK MEDIO": "R$ {:,.2f}"
+        }),
+        use_container_width=True
+    )
+
+def premiação_tab():
+    st.subheader("🏆 Aba Premiação")
+    st.info("Em construção — aguardando definição das regras exatas de cálculo.")
+
+def main():
+    st.title("📊 Sistema de Faturamento e Premiação")
+
+    # Carregar DesVend automaticamente
+    df_desvend = read_file(fallback_path=FALLBACK_DESVEND)
+    if df_desvend.empty:
+        st.error(f"Não foi possível carregar o arquivo {FALLBACK_DESVEND}.")
+        st.stop()
     else:
-        st.markdown(f"**Coluna chave em DesVend:** `{loja_col}` — **Coluna chave em Talões Pendentes:** `{codfil_col}`")
-        df_desvend = df_desvend.astype(str)
-        df_taloes = df_taloes.astype(str)
-        if codfil_col in df_taloes.columns and loja_col in df_desvend.columns:
-            valid_lojas = set(df_taloes[codfil_col].dropna().astype(str).unique())
-            df_filtered = df_desvend[df_desvend[loja_col].astype(str).isin(valid_lojas)].copy()
+        st.success(f"✅ DesVend carregado com sucesso! ({df_desvend.shape[0]} linhas)")
+
+    # Upload Talões Pendentes
+    taloes_file = st.file_uploader("Carregar arquivo Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"])
+    df_taloes = pd.DataFrame()
+    if taloes_file:
+        df_taloes = read_file(uploaded_file=taloes_file)
+        if df_taloes.empty:
+            st.error("Arquivo Talões Pendentes inválido ou vazio.")
+            st.stop()
         else:
-            df_filtered = df_desvend.copy()
+            st.success(f"✅ Talões Pendentes carregado com sucesso! ({df_taloes.shape[0]} linhas)")
+            if "CODFIL" not in df_taloes.columns:
+                st.error("Arquivo Talões Pendentes não contém a coluna obrigatória 'CODFIL'.")
+                st.stop()
+            else:
+                st.info("Coluna 'CODFIL' encontrada.")
 
-        consultant_col = find_column(df_filtered, ['consultor', 'vendedor', 'nome', 'representante'])
-        value_col = find_column(df_filtered, ['valor', 'vlr', 'venda', 'total', 'valor_total', 'valor bruto'])
+    tab1, tab2 = st.tabs(["📈 Faturamento", "🏆 Premiação"])
 
-        if apply_consultant_filter and consultant_col:
-            consultants = sorted(df_filtered[consultant_col].fillna('N/D').unique())
-            selected_consultants = st.multiselect("Filtrar por Consultor", options=consultants, default=consultants)
-            df_filtered = df_filtered[df_filtered[consultant_col].isin(selected_consultants)]
+    with tab1:
+        faturamento_tab(df_desvend)
 
-        st.subheader("Tabela filtrada — Faturamento")
-        st.dataframe(df_filtered, use_container_width=True)
-        csv_bytes = df_filtered.to_csv(index=False).encode('utf-8')
-        st.download_button("Baixar Faturamento filtrado (CSV)", data=csv_bytes, file_name="faturamento_filtrado.csv", mime='text/csv')
+    with tab2:
+        premiação_tab()
 
-# ------------------- Aba Premiação -----------------------------------
-with tabs[1]:
-    st.header("Premiação")
-    if df_desvend.empty or df_taloes.empty:
-        st.info("Aguarde upload dos arquivos.")
-    else:
-        df_desvend = df_desvend.astype(str)
-        df_taloes = df_taloes.astype(str)
-        if codfil_col in df_taloes.columns and loja_col in df_desvend.columns:
-            valid_lojas = set(df_taloes[codfil_col].dropna().astype(str).unique())
-            df_prem = df_desvend[df_desvend[loja_col].astype(str).isin(valid_lojas)].copy()
-        else:
-            df_prem = df_desvend.copy()
-
-        consultant_col = find_column(df_prem, ['consultor', 'vendedor', 'nome', 'representante'])
-        value_col = find_column(df_prem, ['valor', 'vlr', 'venda', 'total', 'valor_total', 'valor bruto'])
-
-        df_prem['__valor_num__'] = df_prem[value_col].apply(to_numeric_safe)
-        if consultant_col in df_prem.columns:
-            agg = df_prem.groupby(consultant_col)['__valor_num__'].sum().reset_index().rename(columns={'__valor_num__': 'Faturamento_Total'})
-        else:
-            agg = pd.DataFrame({'Faturamento_Total': [df_prem['__valor_num__'].sum()]})
-
-        st.subheader("Faturamento por consultor")
-        st.dataframe(agg, use_container_width=True)
-
-        prm_lines = [r.strip() for r in prm_text.splitlines() if r.strip()]
-        prm_rows = []
-        for ln in prm_lines:
-            parts = [p.strip() for p in ln.split(',')]
-            if len(parts) == 3:
-                name = parts[0]
-                pct = float(parts[1]) if parts[1].replace('.', '', 1).isdigit() else 0.0
-                fixed = float(parts[2]) if parts[2].replace('.', '', 1).isdigit() else 0.0
-                prm_rows.append({'Faixa': name, 'Percentual': pct, 'ValorFixo': fixed})
-
-        prm_df = pd.DataFrame(prm_rows)
-        edited_prm = st.experimental_data_editor(prm_df, num_rows="dynamic")
-
-        result = agg.copy()
-        for idx, row in edited_prm.iterrows():
-            pct = float(row.get('Percentual', 0.0))
-            fixed = float(row.get('ValorFixo', 0.0))
-            col_name = f"Bônus_{row.get('Faixa', idx)}"
-            result[col_name] = result['Faturamento_Total'] * (pct / 100.0) + fixed
-        result['Bônus_Total'] = result.filter(like='Bônus_').sum(axis=1)
-
-        st.subheader("Resultado da premiação")
-        st.dataframe(result, use_container_width=True)
-        csv_out = result.to_csv(index=False).encode('utf-8')
-        st.download_button("Baixar relatório de premiação (CSV)", data=csv_out, file_name="premiacao_relatorio.csv", mime='text/csv')
+if __name__ == "__main__":
+    main()
