@@ -3,7 +3,6 @@ import pandas as pd
 import os
 import io
 import csv
-from typing import Optional
 
 FALLBACK_DESVEND = '/mnt/data/DesVend.CSV'
 FALLBACK_TALOES = '/mnt/data/TALÕES PENDENTES.xlsx'
@@ -16,7 +15,7 @@ MODELO_PREMIACAO_PADRAO = pd.DataFrame({
 })
 
 @st.cache_data(show_spinner=False)
-def read_file(file: Optional[st.runtime.uploaded_file_manager.UploadedFile], fallback_path: str) -> pd.DataFrame:
+def read_file(file, fallback_path):
     if file is None:
         if os.path.exists(fallback_path):
             try:
@@ -68,18 +67,18 @@ def read_file(file: Optional[st.runtime.uploaded_file_manager.UploadedFile], fal
         st.error(f"Erro ao ler arquivo {file.name}: {e}")
         return pd.DataFrame()
 
-def validar_colunas(df: pd.DataFrame, colunas_necessarias: list, nome_arquivo: str) -> bool:
+def validar_colunas(df, colunas_necessarias, nome_arquivo):
     faltantes = [c for c in colunas_necessarias if c not in df.columns]
     if faltantes:
         st.error(f"Arquivo '{nome_arquivo}' está faltando colunas necessárias: {faltantes}")
         return False
     return True
 
-def filtrar_faturamento(df_desvend: pd.DataFrame, df_taloes: pd.DataFrame) -> pd.DataFrame:
+def filtrar_faturamento(df_desvend, df_taloes):
     lojas_validas = df_taloes['CODFIL'].dropna().unique()
     return df_desvend[df_desvend['LOJA'].isin(lojas_validas)]
 
-def calcular_premiacao(df_filtrado: pd.DataFrame, premiacoes: list) -> pd.DataFrame:
+def calcular_premiacao(df_filtrado, premiacoes):
     resumo = df_filtrado.groupby('VENDEDOR')['TOTAL VENDAS'].apply(lambda x: pd.to_numeric(x, errors='coerce').fillna(0).sum()).reset_index()
     resumo['Premiação Calculada'] = 0.0
 
@@ -97,7 +96,7 @@ def destaque_premiacao(val):
         color = ''
     return color
 
-def exportar_excel(df: pd.DataFrame) -> bytes:
+def exportar_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
@@ -111,16 +110,21 @@ def main():
     with st.sidebar.expander("Upload dos arquivos"):
         desvend_file = st.file_uploader("Upload DesVend (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com dados de vendas")
         taloes_file = st.file_uploader("Upload Talões Pendentes (.csv, .xls, .xlsx)", type=["csv", "xls", "xlsx"], help="Arquivo com lojas válidas")
-        # Upload para DesVend AUDITORIA_AUTOMATICA desabilitado
+        # Upload DesVend AUDITORIA_AUTOMATICA desabilitado (modelo embutido)
 
     with st.spinner("Lendo arquivos..."):
         df_desvend = read_file(desvend_file, FALLBACK_DESVEND)
         df_taloes = read_file(taloes_file, FALLBACK_TALOES)
         df_auditoria = MODELO_PREMIACAO_PADRAO.copy()
 
+    # Mostrar colunas do Talões Pendentes para debug
+    st.write("Colunas encontradas no arquivo Talões Pendentes:", df_taloes.columns.tolist())
+
     if not validar_colunas(df_desvend, ['LOJA', 'VENDEDOR', 'TOTAL VENDAS'], 'DesVend'):
         st.stop()
+
     if not validar_colunas(df_taloes, ['CODFIL'], 'Talões Pendentes'):
+        st.error("Arquivo Talões Pendentes não contém a coluna 'CODFIL'.")
         st.stop()
 
     tabs = st.tabs(["Faturamento", "Premiação"])
