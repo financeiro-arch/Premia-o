@@ -21,11 +21,15 @@ def read_auditoria(uploaded_file=None, fallback_path=None):
     else:
         return pd.DataFrame()
 
+    # Seleciona apenas colunas necessárias
     df = df.iloc[2:, [0,1,2,3,5,6]]
     df.columns = ["LOJA", "COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]
     df = df.dropna(how="all")
+
+    # Converte colunas numéricas
     for col in ["COTA", "VENDAS", "% VENDAS", "VENDAS ATUALIZADAS", "% COTA ATUAL"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
     df = df.dropna(subset=["LOJA", "COTA", "VENDAS"], how="all")
     return df
 
@@ -84,11 +88,14 @@ df = read_auditoria(uploaded_file, fallback_path=FALLBACK_DESVEND)
 if not df.empty:
     st.subheader("Tabela Consolidada")
     st.dataframe(df, use_container_width=True)
-    
+
+    # Agrupar apenas por LOJA para o gráfico
+    df_loja = df.groupby("LOJA", as_index=False).agg({"VENDAS": "sum"})
+
     st.subheader("Gráfico de Vendas por Loja")
-    fig = px.bar(df.sort_values("VENDAS", ascending=False),
+    fig = px.bar(df_loja.sort_values("VENDAS", ascending=False),
                  x="LOJA", y="VENDAS",
-                 text=df["VENDAS"].apply(lambda x: f"R$ {x:,.0f}"),
+                 text=df_loja["VENDAS"].apply(lambda x: f"R$ {x:,.0f}"),
                  labels={"LOJA": "Loja", "VENDAS": "Vendas (R$)"},
                  title="Vendas por Loja")
     fig.update_traces(textposition='outside', marker_color='royalblue')
